@@ -1,22 +1,31 @@
 import 'dart:convert';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter_web_auth/flutter_web_auth.dart';
 import 'package:ynab_copilot/api/ynab/errors.dart';
 import 'package:http/http.dart' as http;
 
-class YnabApi {
+class YnabApi extends ChangeNotifier {
   String clientId;
 
   String callbackUrlScheme;
 
   String? accessToken;
 
+  DateTime? accessTokenExpiration;
+
   String get oauthUrl =>
-      'https://app.youneedabudget.com/oauth/authorize?client_id=$clientId&redirect_uri=$callbackUrlScheme:/&response_type=code&scope=';
+      'https://app.youneedabudget.com/oauth/authorize?client_id=$clientId&redirect_uri=$callbackUrlScheme:/&response_type=token';
 
-  Function()? onNeedsReauthorization;
+  Future<bool> Function()? onNeedsReauthorization;
 
-  YnabApi({required this.clientId, required this.callbackUrlScheme, this.accessToken, this.onNeedsReauthorization});
+  YnabApi({required this.clientId, required this.callbackUrlScheme, this.onNeedsReauthorization});
+
+  void setAuth(String token, DateTime expiration) {
+    accessToken = token;
+    accessTokenExpiration = expiration;
+    notifyListeners();
+  }
 
   /// Starts the Oauth flow by invoking flutter_web_auth
   /// and opening the YNAB authorization page.
@@ -25,14 +34,22 @@ class YnabApi {
       // Present the dialog to the user
       final result = await FlutterWebAuth.authenticate(url: oauthUrl, callbackUrlScheme: callbackUrlScheme);
 
-      // Extract code from resulting url
-      final code = Uri.parse(result).queryParameters['code'];
+      // Extract the access_token from the URL fragment
+      final fragment = Uri.parse(result).fragment;
+      Map<String, String> fragmentParams = Uri.splitQueryString(fragment);
+      final code = fragmentParams['access_token'];
+      final expiration = fragmentParams['expires_in'] ?? '7200';
       if (code == null) {
-        throw YnabOauthNoAuthorizationCodeError();
+        throw YnabOauthNoAccessToken();
       }
 
-      accessToken = code;
+      setAuth(code, DateTime.now().add(Duration(seconds: int.parse(expiration))));
+
+      // If authorization is successful, notify listeners
+      notifyListeners();
       return code;
+    } on YnabOauthNoAccessToken catch (_) {
+      rethrow;
     } catch (e) {
       throw YnabOauthCancelledError();
     }
@@ -106,12 +123,24 @@ class YnabApi {
       throw YnabNotAuthenticatedError();
     }
 
+    // If the token has expired, call the onNeedsReauthorization callback
+    if (onNeedsReauthorization != null &&
+        accessTokenExpiration != null &&
+        DateTime.now().isAfter(accessTokenExpiration!)) {
+      final shouldRetry = await onNeedsReauthorization!();
+      if (!shouldRetry) {
+        return null;
+      }
+
+      return await _request(method: method, path: path, queryParameters: queryParameters, headers: headers, body: body);
+    }
+
     // Build headers for the API request
     final finalHeaders = _buildDefaultHeaders();
 
     // Add custom headers
     if (headers != null) {
-      headers.addAll(headers);
+      finalHeaders.addAll(headers);
     }
 
     // Make the request
@@ -130,8 +159,14 @@ class YnabApi {
 
     // Send the request
     http.StreamedResponse response = await request.send();
+
+    // If the response is a 401, call the onNeedsReauthorization callback
     if ([401].contains(response.statusCode) && onNeedsReauthorization != null) {
-      await onNeedsReauthorization!();
+      final shouldRetry = await onNeedsReauthorization!();
+      if (!shouldRetry) {
+        return null;
+      }
+
       return await _request(method: method, path: path, queryParameters: queryParameters, headers: headers, body: body);
     }
 
