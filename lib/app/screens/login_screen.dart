@@ -3,8 +3,10 @@ import 'dart:async';
 import 'package:flutter/cupertino.dart';
 import 'package:gap/gap.dart';
 import 'package:ynab_copilot/app/screens/budget_selector_screen.dart';
-import 'package:ynab_copilot/app/widgets/widgets.dart';
+import 'package:ynab_copilot/app/widgets/loader.dart';
+import 'package:ynab_copilot/database/models/app_settings.dart';
 import 'package:ynab_copilot/globals.dart';
+import 'package:ynab_copilot/objectbox.g.dart';
 
 /// Wrapper for stateful functionality to provide onInit calls in stateles widget
 class LoginScreen extends StatefulWidget {
@@ -17,7 +19,7 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   Completer<void> waitForAuth = Completer<void>();
 
-  dynamic userInfo;
+  String? userId;
 
   @override
   void initState() {
@@ -26,17 +28,25 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> loadAuth() async {
-    final token = await database.auth.get('accessToken') as String?;
-    final expiration = await database.auth.get('accessTokenExpiration') as DateTime?;
+    final token = database.getAppSetting('accessToken') as String?;
+    final expiration = database.getAppSetting('accessTokenExpiration') as String?;
+
     if (token == null || expiration == null) {
       return waitForAuth.complete();
     }
 
-    ynab.setAuth(token, expiration);
-    userInfo = await ynab.getUserInfo();
+    ynab.setAuth(token, DateTime.fromMicrosecondsSinceEpoch(int.parse(expiration)));
+
+    try {
+      if (!ynab.authIsExpired) {
+        userId = await ynab.getUserId();
+      }
+    } catch (e) {
+      // If it fails, don't do anything
+    }
 
     // If the user info is not null, navigate to the budget selector screen
-    if (userInfo != null) {
+    if (userId != null) {
       Navigator.of(context).pushReplacement(CupertinoPageRoute<void>(builder: (context) => BudgetSelectorScreen()));
     }
 
@@ -64,11 +74,19 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> authenticate() async {
     await ynab.startOauth();
-    await database.saveAuth(ynab.accessToken!, ynab.accessTokenExpiration!);
-    userInfo = await ynab.getUserInfo();
+
+    // Store the app settings
+    if (!ynab.useDemoData) {
+      final accessToken = AppSettings(name: 'accessToken', value: ynab.accessToken!);
+      final accessTokenExpiration =
+          AppSettings(name: 'accessTokenExpiration', value: ynab.accessTokenExpiration!.millisecondsSinceEpoch);
+      database.appSettings.putMany([accessToken, accessTokenExpiration], mode: PutMode.put);
+    }
+
+    userId = await ynab.getUserId();
 
     // If the user info is not null, navigate to the budget selector screen
-    if (userInfo != null) {
+    if (userId != null) {
       Navigator.of(context).pushReplacement(CupertinoPageRoute<void>(builder: (context) => BudgetSelectorScreen()));
       return;
     }
@@ -81,7 +99,7 @@ class _LoginScreenState extends State<LoginScreen> {
     return FutureBuilder(
         future: waitForAuth.future,
         builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.done && userInfo == null) {
+          if (snapshot.connectionState == ConnectionState.done && userId == null) {
             // Return a "Continue with YNAB" button with a leading YNAB logo
             return CupertinoPageScaffold(
               child: Center(
@@ -97,7 +115,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       child: Row(mainAxisSize: MainAxisSize.min, children: [
                         Icon(CupertinoIcons.lock, color: CupertinoColors.white),
                         Gap(10),
-                        const Text('Login with YNAB')
+                        const Text('Login with YNAB', style: TextStyle(color: CupertinoColors.white))
                       ]),
                     ),
                   ],
@@ -105,7 +123,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             );
           } else {
-            return genericLoader;
+            return Loader();
           }
         });
   }

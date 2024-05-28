@@ -1,14 +1,21 @@
 import 'dart:convert';
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_web_auth/flutter_web_auth.dart';
 import 'package:ynab_copilot/api/ynab/errors.dart';
 import 'package:http/http.dart' as http;
+import 'package:ynab_copilot/database/models/ynab/account.dart';
+import 'package:ynab_copilot/database/models/ynab/budget.dart';
+import 'package:ynab_copilot/database/models/ynab/category_group.dart';
+import 'package:ynab_copilot/database/models/ynab/transaction.dart';
 
 class YnabApi extends ChangeNotifier {
   String clientId;
 
   String callbackUrlScheme;
+
+  bool useDemoData = false;
 
   String? accessToken;
 
@@ -17,9 +24,12 @@ class YnabApi extends ChangeNotifier {
   String get oauthUrl =>
       'https://app.youneedabudget.com/oauth/authorize?client_id=$clientId&redirect_uri=$callbackUrlScheme:/&response_type=token';
 
+  bool get authIsExpired => accessTokenExpiration != null && DateTime.now().isAfter(accessTokenExpiration!);
+
   Future<bool> Function()? onNeedsReauthorization;
 
-  YnabApi({required this.clientId, required this.callbackUrlScheme, this.onNeedsReauthorization});
+  YnabApi(
+      {required this.clientId, required this.callbackUrlScheme, this.onNeedsReauthorization, this.useDemoData = false});
 
   void setAuth(String token, DateTime expiration) {
     accessToken = token;
@@ -30,6 +40,8 @@ class YnabApi extends ChangeNotifier {
   /// Starts the Oauth flow by invoking flutter_web_auth
   /// and opening the YNAB authorization page.
   Future<String> startOauth() async {
+    if (useDemoData) return 'DEMO';
+
     try {
       // Present the dialog to the user
       final result = await FlutterWebAuth.authenticate(url: oauthUrl, callbackUrlScheme: callbackUrlScheme);
@@ -55,36 +67,80 @@ class YnabApi extends ChangeNotifier {
     }
   }
 
-  Future<dynamic> getUserInfo() async {
-    return _request(method: 'GET', path: '/user');
+  Future<String> getUserId() async {
+    Map<String, dynamic> user = {};
+    if (useDemoData) {
+      user =
+          jsonDecode(await rootBundle.loadString('assets/demo_data/user.json'))['data']['user'] as Map<String, dynamic>;
+    } else {
+      final res = await _request(method: 'GET', path: '/user');
+      user = res['data']['user'] as Map<String, dynamic>;
+    }
+
+    return user['id'] as String;
   }
 
-  Future<dynamic> getBudgets() async {
-    return _request(method: 'GET', path: '/budgets');
+  Future<List<YnabBudget>> getBudgets() async {
+    List<dynamic> budgets = [];
+    if (useDemoData) {
+      budgets =
+          jsonDecode(await rootBundle.loadString('assets/demo_data/budgets.json'))['data']['budgets'] as List<dynamic>;
+    } else {
+      final res = await _request(method: 'GET', path: '/budgets');
+      budgets = res['data']['budgets'] as List<dynamic>;
+    }
+
+    return budgets.map((e) => YnabBudget.fromJson(e)).toList();
   }
 
-  Future<dynamic> getBudgetCategories(String budgetId) async {
-    return _request(method: 'GET', path: '/budgets/$budgetId/categories');
+  Future<List<YnabCategoryGroup>> getBudgetCategories(String budgetId) async {
+    List<dynamic> categories = [];
+    if (useDemoData) {
+      categories = jsonDecode(await rootBundle.loadString('assets/demo_data/categories.json'))['data']
+          ['category_groups'] as List<dynamic>;
+    } else {
+      final res = await _request(method: 'GET', path: '/budgets/$budgetId/categories');
+      categories = res['data']['category_groups'] as List<dynamic>;
+    }
+
+    return categories.map((e) => YnabCategoryGroup.fromJson(e)).toList();
   }
 
-  Future<dynamic> getBudgetAccounts(String budgetId) async {
-    return _request(method: 'GET', path: '/budgets/$budgetId/accounts');
+  Future<List<YnabAccount>> getBudgetAccounts(String budgetId) async {
+    List<dynamic> accounts = [];
+    if (useDemoData) {
+      accounts = jsonDecode(await rootBundle.loadString('assets/demo_data/accounts.json'))['data']['accounts']
+          as List<dynamic>;
+    } else {
+      final res = await _request(method: 'GET', path: '/budgets/$budgetId/accounts');
+      accounts = res['data']['accounts'] as List<dynamic>;
+    }
+
+    return accounts.map((e) => YnabAccount.fromJson(e)).toList();
   }
 
-  Future<dynamic> getBudgetSettings(String budgetId) async {
-    return _request(method: 'GET', path: '/budgets/$budgetId/settings');
-  }
+  Future<List<YnabTransaction>> getBudgetTransactions(String budgetId) async {
+    List<dynamic> transactions = [];
+    print("GETING BUDGET TRANSACTIONS");
+    if (useDemoData) {
+      transactions = jsonDecode(await rootBundle.loadString('assets/demo_data/transactions.json'))['data']
+          ['transactions'] as List<dynamic>;
+    } else {
+      final res = await _request(method: 'GET', path: '/budgets/$budgetId/transactions');
+      transactions = res['data']['transactions'] as List<dynamic>;
+    }
 
-  Future<dynamic> getBudgetTransactions(String budgetId) async {
-    return _request(method: 'GET', path: '/budgets/$budgetId/transactions');
-  }
+    print("GOT RESULTS");
 
-  Future<dynamic> getBudgetPayees(String budgetId) async {
-    return _request(method: 'GET', path: '/budgets/$budgetId/payees');
-  }
-
-  Future<dynamic> getBudgetMonths(String budgetId) async {
-    return _request(method: 'GET', path: '/budgets/$budgetId/months');
+    try {
+      final test = transactions.map((e) => YnabTransaction.fromJson(e)).toList();
+      print("RETURNING RESULTS");
+      return test;
+    } catch (e, stacktrace) {
+      print("ERROR: $e");
+      print("STACKTRACE: $stacktrace");
+      return [];
+    }
   }
 
   Future<dynamic> getBudgetMonth(String budgetId, String month) async {
@@ -119,20 +175,19 @@ class YnabApi extends ChangeNotifier {
     Map<String, String>? headers,
     Map<String, dynamic>? body,
   }) async {
-    if (accessToken == null) {
-      throw YnabNotAuthenticatedError();
-    }
-
     // If the token has expired, call the onNeedsReauthorization callback
-    if (onNeedsReauthorization != null &&
-        accessTokenExpiration != null &&
-        DateTime.now().isAfter(accessTokenExpiration!)) {
-      final shouldRetry = await onNeedsReauthorization!();
-      if (!shouldRetry) {
-        return null;
+    if (authIsExpired) {
+      if (onNeedsReauthorization != null) {
+        final shouldRetry = await onNeedsReauthorization!();
+        if (!shouldRetry) {
+          return null;
+        }
+
+        return await _request(
+            method: method, path: path, queryParameters: queryParameters, headers: headers, body: body);
       }
 
-      return await _request(method: method, path: path, queryParameters: queryParameters, headers: headers, body: body);
+      throw YnabNotAuthenticatedError();
     }
 
     // Build headers for the API request
@@ -161,13 +216,18 @@ class YnabApi extends ChangeNotifier {
     http.StreamedResponse response = await request.send();
 
     // If the response is a 401, call the onNeedsReauthorization callback
-    if ([401].contains(response.statusCode) && onNeedsReauthorization != null) {
-      final shouldRetry = await onNeedsReauthorization!();
-      if (!shouldRetry) {
-        return null;
+    if ([401].contains(response.statusCode)) {
+      if (onNeedsReauthorization != null) {
+        final shouldRetry = await onNeedsReauthorization!();
+        if (!shouldRetry) {
+          return null;
+        }
+
+        return await _request(
+            method: method, path: path, queryParameters: queryParameters, headers: headers, body: body);
       }
 
-      return await _request(method: method, path: path, queryParameters: queryParameters, headers: headers, body: body);
+      throw YnabNotAuthenticatedError();
     }
 
     // Parse the response

@@ -1,0 +1,27 @@
+{
+    "data": {
+        "budgets": [
+            {
+                "id": "c6caaf73-4a08-48f1-1a35-b52a263b0fc5",
+                "name": "My First Budget",
+                "last_modified_on": "2024-04-24T13:52:04Z",
+                "first_month": "2017-11-01",
+                "last_month": "2024-04-01",
+                "date_format": {
+                    "format": "MM/DD/YYYY"
+                },
+                "currency_format": {
+                    "iso_code": "USD",
+                    "example_format": "123,456.78",
+                    "decimal_digits": 2,
+                    "decimal_separator": ".",
+                    "symbol_first": true,
+                    "group_separator": ",",
+                    "currency_symbol": "$",
+                    "display_symbol": true
+                }
+            }
+        ],
+        "default_budget": null
+    }
+}

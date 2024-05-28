@@ -1,37 +1,18 @@
 import 'package:flutter/cupertino.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:gap/gap.dart';
-import 'package:ynab_copilot/app/screens/analytics_selection_screen.dart';
-import 'package:ynab_copilot/globals.dart';
+import 'package:ynab_copilot/api/riverpods/ynab_pods.dart';
+import 'package:ynab_copilot/database/models/ynab/budget.dart';
+import 'package:ynab_copilot/app/screens/budget_categories_view.dart';
 import 'package:ynab_copilot/utils/color_utils.dart';
 import 'package:ynab_copilot/utils/date_utils.dart';
 
-class BudgetSelectorScreen extends StatefulWidget {
+class BudgetSelectorScreen extends ConsumerWidget {
   @override
-  State<BudgetSelectorScreen> createState() => _BudgetSelectorScreenState();
-}
-
-class _BudgetSelectorScreenState extends State<BudgetSelectorScreen> {
-  List<dynamic> budgets = [];
-
-  @override
-  void initState() {
-    super.initState();
-    loadBudgets();
-  }
-
-  Future<void> loadBudgets() async {
-    final budgets = await ynab.getBudgets();
-    setState(() {
-      this.budgets = budgets['data']['budgets'] as List<dynamic>;
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final budgets = ref.watch(ynabBudgetsProvider);
     return CupertinoPageScaffold(
-      // A ScrollView that creates custom scroll effects using slivers.
       child: CustomScrollView(
-        // A list of sliver widgets.
         slivers: <Widget>[
           CupertinoSliverNavigationBar(
             largeTitle: Row(children: [
@@ -46,17 +27,17 @@ class _BudgetSelectorScreenState extends State<BudgetSelectorScreen> {
               child: CupertinoListSection(
             footer: const Text('Select a budget to analyze spending habits.'),
             children: <CupertinoListTile>[
-              if (budgets.isEmpty)
+              if ((budgets.value ?? []).isEmpty)
                 const CupertinoListTile(
                   title: Text('No budgets found!'),
                 ),
-              for (var budget in budgets)
+              for (YnabBudget budget in (budgets.value ?? []))
                 CupertinoListTile(
-                  title: Text(budget['name'] as String),
+                  title: Text(budget.name),
                   leading: Container(
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: generateColor(budget['id'] as String),
+                      color: generateColor(budget.id),
                     ),
                     width: 18,
                     height: 18,
@@ -65,15 +46,17 @@ class _BudgetSelectorScreenState extends State<BudgetSelectorScreen> {
                     children: [
                       Icon(CupertinoIcons.timer, size: 16, color: CupertinoColors.systemGrey),
                       Gap(5),
-                      Text(relativeDate(DateTime.parse(budget['last_modified_on'] as String))),
+                      Text(relativeDate(budget.lastModifiedOn)),
                     ],
                   ),
                   trailing: const CupertinoListTileChevron(),
                   onTap: () {
+                    ref.read(selectedYnabBudgetProvider.notifier).set(budget);
+
                     // Navigate to the budget detail screen.
                     Navigator.of(context).push(
                       CupertinoPageRoute<void>(
-                        builder: (BuildContext context) => AnalyticsSelectionScreen(budgetInfo: budget),
+                        builder: (BuildContext context) => BudgetCategoriesView(),
                       ),
                     );
                   },
