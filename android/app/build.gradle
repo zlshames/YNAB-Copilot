@@ -23,7 +23,7 @@ if (flutterVersionName == null) {
 }
 
 android {
-    namespace "com.example.ynab_copilot"
+    namespace "com.zlshames.ynab_copilot"
     compileSdk flutter.compileSdkVersion
     ndkVersion flutter.ndkVersion
 

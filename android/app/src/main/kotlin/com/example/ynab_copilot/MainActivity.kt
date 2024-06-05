@@ -1,4 +1,4 @@
-package com.example.ynab_copilot
+package com.zlshames.ynab_copilot
 
 import io.flutter.embedding.android.FlutterActivity
 
